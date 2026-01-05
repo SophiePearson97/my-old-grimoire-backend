@@ -6,6 +6,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 
 const connectDb = require("./config/db");
+const authRoutes = require("./routes/auth");
 
 const app = express();
 
@@ -16,8 +17,8 @@ app.use(express.json());
 
 connectDb();
 
-app.get("/", (req, res) => {
-  res.status(200).json({ message: "API running" });
-});
+app.use("/api/auth", authRoutes);
+
+app.get("/", (req, res) => res.status(200).json({ message: "API running" }));
 
 module.exports = app;
