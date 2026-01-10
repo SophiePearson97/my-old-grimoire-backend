@@ -14,6 +14,8 @@ const bookRoutes = require("./routes/books");
 
 const app = express();
 
+connectDb();
+
 app.use(helmet());
 app.use(cors());
 app.use(morgan("dev"));
@@ -21,8 +23,6 @@ app.use(express.json());
 
 app.use("/images", express.static(path.join(__dirname, "images")));
 app.use("/api/books", bookRoutes);
-
-connectDb();
 
 app.use("/api/auth", authRoutes);
 
