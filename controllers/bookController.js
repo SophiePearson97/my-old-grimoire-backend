@@ -178,3 +178,47 @@ exports.rate = async (req, res) => {
     res.status(400).json(error);
   }
 };
+
+// GET /api/books/best-rated
+exports.getBestRated = async (req, res) => {
+  try {
+    const books = await Book.find().sort({ averageRating: -1 }).limit(3);
+    return res.status(200).json(books);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /api/books/:id/rate
+exports.rateBook = async (req, res) => {
+  try {
+    const bookId = req.params.id;
+    const userId = req.auth.userId;
+    const grade = Number(req.body.rating);
+
+    if (Number.isNaN(grade)) {
+      return res.status(400).json({ error: "Rating must be a number" });
+    }
+    if (grade < 0 || grade > 5) {
+      return res.status(400).json({ error: "Rating must be between 0 and 5" });
+    }
+
+    const book = await Book.findById(bookId);
+    if (!book) return res.status(404).json({ error: "Book not found" });
+
+    const alreadyRated = book.ratings.some((r) => r.userId === userId);
+    if (alreadyRated) {
+      return res.status(400).json({ error: "User has already rated this book" });
+    }
+
+    book.ratings.push({ userId, grade });
+
+    const sum = book.ratings.reduce((acc, r) => acc + r.grade, 0);
+    book.averageRating = Math.round((sum / book.ratings.length) * 10) / 10;
+
+    await book.save();
+    return res.status(200).json(book);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+};

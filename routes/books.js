@@ -7,8 +7,9 @@ const bookCtrl = require("../controllers/bookController");
 
 router.use(auth);
 
-router.get("/", bookCtrl.getAll);
 router.get("/bestrating", bookCtrl.getBestRating);
+
+router.get("/", bookCtrl.getAll);
 router.get("/:id", bookCtrl.getOne);
 
 router.post("/", upload, bookCtrl.create);
