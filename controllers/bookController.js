@@ -3,11 +3,9 @@ const path = require("path");
 const sharp = require("sharp");
 const Book = require("../models/Book");
 
-const parseMaybeJson = (val) => {
-  if (!val) return null;
-  if (typeof val === "object") return val;
-  return JSON.parse(val);
-};
+/* ---------- helpers ---------- */
+
+const cleanId = (id) => String(id).replace(/["\\]/g, "").trim();
 
 const buildImageUrl = (req, filename) =>
   `${req.protocol}://${req.get("host")}/images/${filename}`;
@@ -32,54 +30,52 @@ const saveOptimizedImage = async (req) => {
 };
 
 const deleteImageFromUrl = (imageUrl) => {
-  try {
-    const filename = imageUrl.split("/images/")[1];
-    if (!filename) return;
-    fs.unlink(path.join(__dirname, "..", "images", filename), () => {});
-  } catch (_) {}
+  if (!imageUrl) return;
+  const filename = imageUrl.split("/images/")[1];
+  if (!filename) return;
+  fs.unlink(path.join(__dirname, "..", "images", filename), () => {});
 };
+
+/* ---------- controllers ---------- */
 
 // GET /api/books
 exports.getAll = async (req, res) => {
   try {
     const books = await Book.find();
     res.status(200).json(books);
-  } catch (error) {
-    res.status(500).json(error);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 
 // GET /api/books/:id
 exports.getOne = async (req, res) => {
   try {
-    const book = await Book.findById(req.params.id);
+    const bookId = cleanId(req.params.id);
+    const book = await Book.findById(bookId);
+    if (!book) return res.status(404).json({ error: "Book not found" });
     res.status(200).json(book);
-  } catch (error) {
-    res.status(400).json(error);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 };
 
 // GET /api/books/bestrating
 exports.getBestRating = async (req, res) => {
   try {
-    const top3 = await Book.find().sort({ averageRating: -1 }).limit(3);
-    res.status(200).json(top3);
-  } catch (error) {
-    res.status(500).json(error);
+    const books = await Book.find().sort({ averageRating: -1 }).limit(3);
+    res.status(200).json(books);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 
-// POST /api/books  (multipart: book + image)
+// POST /api/books
 exports.create = async (req, res) => {
   try {
-    const bookData = parseMaybeJson(req.body.book);
+    const bookData = JSON.parse(req.body.book);
     const filename = await saveOptimizedImage(req);
 
-    if (!bookData || !filename) {
-      return res.status(400).json(new Error("Bad request"));
-    }
-
-    // never trust frontend userId: force from token
     bookData.userId = req.auth.userId;
 
     const book = new Book({
@@ -91,115 +87,68 @@ exports.create = async (req, res) => {
 
     await book.save();
     res.status(201).json({ message: "Book saved successfully!" });
-  } catch (error) {
-    res.status(400).json(error);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 };
 
-// PUT /api/books/:id (JSON OR multipart book+image)
+// PUT /api/books/:id
 exports.update = async (req, res) => {
   try {
-    const existing = await Book.findById(req.params.id);
+    const bookId = cleanId(req.params.id);
+    const book = await Book.findById(bookId);
 
-    // owner-only
-    if (!existing || existing.userId !== req.auth.userId) {
-      return res.status(403).json(new Error("unauthorized request."));
+    if (!book || book.userId !== req.auth.userId) {
+      return res.status(403).json({ error: "Unauthorized" });
     }
 
-    const incoming = req.file ? parseMaybeJson(req.body.book) : req.body;
+    let updatedData = req.body;
 
-    let imageUrl = existing.imageUrl;
     if (req.file) {
-      deleteImageFromUrl(existing.imageUrl);
+      deleteImageFromUrl(book.imageUrl);
       const filename = await saveOptimizedImage(req);
-      imageUrl = buildImageUrl(req, filename);
+      updatedData = JSON.parse(req.body.book);
+      updatedData.imageUrl = buildImageUrl(req, filename);
     }
 
-    // don’t allow editing ratings via PUT
-    delete incoming.ratings;
-    delete incoming.averageRating;
-    delete incoming.userId;
+    delete updatedData.userId;
+    delete updatedData.ratings;
+    delete updatedData.averageRating;
 
-    await Book.updateOne(
-      { _id: req.params.id },
-      { ...incoming, imageUrl, userId: req.auth.userId }
-    );
-
+    await Book.updateOne({ _id: bookId }, updatedData);
     res.status(200).json({ message: "Book updated successfully!" });
-  } catch (error) {
-    res.status(400).json(error);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 };
 
 // DELETE /api/books/:id
 exports.remove = async (req, res) => {
   try {
-    const existing = await Book.findById(req.params.id);
+    const bookId = cleanId(req.params.id);
+    const book = await Book.findById(bookId);
 
-    if (!existing || existing.userId !== req.auth.userId) {
-      return res.status(403).json(new Error("unauthorized request."));
+    if (!book || book.userId !== req.auth.userId) {
+      return res.status(403).json({ error: "Unauthorized" });
     }
 
-    deleteImageFromUrl(existing.imageUrl);
-    await Book.deleteOne({ _id: req.params.id });
+    deleteImageFromUrl(book.imageUrl);
+    await Book.deleteOne({ _id: bookId });
 
     res.status(200).json({ message: "Book deleted successfully!" });
-  } catch (error) {
-    res.status(400).json(error);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 };
 
 // POST /api/books/:id/rating
 exports.rate = async (req, res) => {
   try {
-    const { userId, rating } = req.body;
-
-    if (typeof rating !== "number" || rating < 0 || rating > 5) {
-      return res.status(400).json(new Error("Rating must be between 0 and 5"));
-    }
-
-    const book = await Book.findById(req.params.id);
-
-    // cannot rate twice
-    const already = book.ratings.some((r) => r.userId === userId);
-    if (already) {
-      return res.status(400).json(new Error("It is not possible to edit a rating."));
-    }
-
-    book.ratings.push({ userId, grade: rating });
-
-    // update averageRating
-    const sum = book.ratings.reduce((acc, r) => acc + r.grade, 0);
-    book.averageRating = sum / book.ratings.length;
-
-    await book.save();
-    res.status(200).json(book);
-  } catch (error) {
-    res.status(400).json(error);
-  }
-};
-
-// GET /api/books/best-rated
-exports.getBestRated = async (req, res) => {
-  try {
-    const books = await Book.find().sort({ averageRating: -1 }).limit(3);
-    return res.status(200).json(books);
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-};
-
-// POST /api/books/:id/rate
-exports.rateBook = async (req, res) => {
-  try {
-    const bookId = req.params.id;
+    const bookId = cleanId(req.params.id);
     const userId = req.auth.userId;
     const grade = Number(req.body.rating);
 
-    if (Number.isNaN(grade)) {
-      return res.status(400).json({ error: "Rating must be a number" });
-    }
-    if (grade < 0 || grade > 5) {
+    if (Number.isNaN(grade) || grade < 0 || grade > 5) {
       return res.status(400).json({ error: "Rating must be between 0 and 5" });
     }
 
@@ -208,7 +157,7 @@ exports.rateBook = async (req, res) => {
 
     const alreadyRated = book.ratings.some((r) => r.userId === userId);
     if (alreadyRated) {
-      return res.status(400).json({ error: "User has already rated this book" });
+      return res.status(400).json({ error: "User already rated this book" });
     }
 
     book.ratings.push({ userId, grade });
@@ -217,8 +166,8 @@ exports.rateBook = async (req, res) => {
     book.averageRating = Math.round((sum / book.ratings.length) * 10) / 10;
 
     await book.save();
-    return res.status(200).json(book);
+    res.status(200).json(book);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 };
