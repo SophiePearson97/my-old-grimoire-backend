@@ -13,6 +13,12 @@ const cleanId = (id) =>
     .replace(/["\\]/g, "")
     .trim();
 
+const parseMaybeJson = (value) => {
+  if (!value) return null;
+  if (typeof value === "object") return value;
+  return JSON.parse(value);
+};
+
 const buildImageUrl = (req, filename) => {
   const baseUrl =
     process.env.BACKEND_URL ||
@@ -84,14 +90,14 @@ exports.getBestRating = async (req, res) => {
   }
 };
 
-// POST /api/books (multipart form-data)
+// POST /api/books
 exports.create = async (req, res) => {
   try {
-    const bookData = JSON.parse(req.body.book);
+    const bookData = parseMaybeJson(req.body.book);
     const filename = await saveOptimizedImage(req);
 
-    if (!filename) {
-      return res.status(400).json({ error: "Image is required" });
+    if (!bookData || !filename) {
+      return res.status(400).json({ error: "Invalid request" });
     }
 
     bookData.userId = req.auth.userId;
@@ -106,7 +112,8 @@ exports.create = async (req, res) => {
     await book.save();
     return res.status(201).json({ message: "Book saved successfully!" });
   } catch (err) {
-    return res.status(400).json({ error: err.message });
+    console.error("CREATE ERROR:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
 
@@ -125,7 +132,7 @@ exports.update = async (req, res) => {
     if (req.file) {
       deleteImageFromUrl(book.imageUrl);
       const filename = await saveOptimizedImage(req);
-      updatedData = JSON.parse(req.body.book);
+      updatedData = parseMaybeJson(req.body.book);
       updatedData.imageUrl = buildImageUrl(req, filename);
     }
 
@@ -165,39 +172,27 @@ exports.rate = async (req, res) => {
     const bookId = cleanId(req.params.id);
     const userId = req.auth.userId;
 
-    // accept rating under rating OR grade (frontend variance)
     const raw = req.body?.rating ?? req.body?.grade;
-
     if (raw === undefined || raw === null || raw === "") {
       return res.status(400).json({ error: "Missing rating" });
     }
 
-    // accept "5" (string) or 5 (number)
-    const grade = Number(String(raw).trim());
-
-    if (!Number.isFinite(grade) || grade < 0 || grade > 5) {
+    const grade = Number(raw);
+    if (Number.isNaN(grade) || grade < 0 || grade > 5) {
       return res.status(400).json({ error: "Rating must be between 0 and 5" });
     }
 
     const book = await Book.findById(bookId);
     if (!book) return res.status(404).json({ error: "Book not found" });
 
-    if (!Array.isArray(book.ratings)) book.ratings = [];
-
-    // safe compare (ObjectId vs string)
-    const alreadyRated = book.ratings.some(
-      (r) => String(r.userId) === String(userId)
-    );
-
+    const alreadyRated = book.ratings.some((r) => r.userId === userId);
     if (alreadyRated) {
-      return res
-        .status(400)
-        .json({ error: "It is not possible to edit a rating." });
+      return res.status(400).json({ error: "User already rated this book" });
     }
 
     book.ratings.push({ userId, grade });
 
-    const sum = book.ratings.reduce((acc, r) => acc + Number(r.grade || 0), 0);
+    const sum = book.ratings.reduce((acc, r) => acc + r.grade, 0);
     book.averageRating = Math.round((sum / book.ratings.length) * 10) / 10;
 
     await book.save();
