@@ -1,39 +1,51 @@
 require("dotenv").config();
 
 const express = require("express");
-const path = require("path");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const path = require("path");
 
-const connectDB = require("./config/db");
-
+const connectDb = require("./config/db");
 const authRoutes = require("./routes/auth");
 const bookRoutes = require("./routes/books");
 
 const app = express();
 
-// Security + logging
-app.use(helmet());
-app.use(cors());
-app.use(morgan("dev"));
+// ✅ Allow requests from your React app
+app.use(
+  cors({
+    origin: "http://localhost:3000",
+    credentials: true,
+  })
+);
 
-// Parse JSON bodies
+// ✅ IMPORTANT: Allow images to be loaded cross-origin (3000 -> 4000)
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+app.use(morgan("dev"));
 app.use(express.json());
 
-// Serve images as static files
-app.use("/images", express.static(path.join(__dirname, "images")));
+// ✅ Serve images folder publicly
+app.use(
+  "/images",
+  express.static(path.join(__dirname, "images"))
+);
 
-// Routes
+// ✅ Connect DB
+connectDb();
+
+// ✅ Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
 
-// Health check
+// ✅ Health check
 app.get("/", (req, res) => {
   res.status(200).json({ message: "API running" });
 });
-
-// Connect DB once when app loads
-connectDB();
 
 module.exports = app;

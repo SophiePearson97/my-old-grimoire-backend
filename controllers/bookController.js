@@ -13,8 +13,12 @@ const cleanId = (id) =>
     .replace(/["\\]/g, "")
     .trim();
 
-const buildImageUrl = (req, filename) =>
-  `${req.protocol}://${req.get("host")}/images/${filename}`;
+const buildImageUrl = (req, filename) => {
+  const baseUrl =
+    process.env.BACKEND_URL ||
+    `${req.protocol}://localhost:${process.env.PORT || 4000}`;
+  return `${baseUrl}/images/${filename}`;
+};
 
 const saveOptimizedImage = async (req) => {
   if (!req.file) return null;
@@ -158,10 +162,10 @@ exports.remove = async (req, res) => {
 // POST /api/books/:id/rating
 exports.rate = async (req, res) => {
   try {
-    console.log("✅ RATE ROUTE HIT");
-
     const bookId = cleanId(req.params.id);
     const userId = req.auth.userId;
+
+    // frontend sends { rating: number }
     const grade = Number(req.body.rating);
 
     if (Number.isNaN(grade) || grade < 0 || grade > 5) {
@@ -179,13 +183,11 @@ exports.rate = async (req, res) => {
     book.ratings.push({ userId, grade });
 
     const sum = book.ratings.reduce((acc, r) => acc + r.grade, 0);
-    book.averageRating =
-      Math.round((sum / book.ratings.length) * 10) / 10;
+    book.averageRating = Math.round((sum / book.ratings.length) * 10) / 10;
 
     await book.save();
     return res.status(200).json(book);
   } catch (err) {
-    console.error("❌ RATE ERROR:", err);
     return res.status(500).json({ error: err.message });
   }
 };
