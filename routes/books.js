@@ -5,13 +5,10 @@ const auth = require("../middleware/auth");
 const upload = require("../middleware/multer");
 const bookCtrl = require("../controllers/bookController");
 
-// PUBLIC routes (no auth)
+// PUBLIC routes (NO auth)
+router.get("/bestrating", bookCtrl.getBestRating);
 router.get("/", bookCtrl.getAll);
 router.get("/:id", bookCtrl.getOne);
-
-// Recommendations endpoint(s) (public)
-router.get("/bestrating", bookCtrl.getBestRating);
-router.get("/best-rated", bookCtrl.getBestRating);
 
 // PROTECTED routes (auth required)
 router.post("/", auth, upload, bookCtrl.create);
