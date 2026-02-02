@@ -165,24 +165,39 @@ exports.rate = async (req, res) => {
     const bookId = cleanId(req.params.id);
     const userId = req.auth.userId;
 
-    // frontend sends { rating: number }
-    const grade = Number(req.body.rating);
+    // accept rating under rating OR grade (frontend variance)
+    const raw = req.body?.rating ?? req.body?.grade;
 
-    if (Number.isNaN(grade) || grade < 0 || grade > 5) {
+    if (raw === undefined || raw === null || raw === "") {
+      return res.status(400).json({ error: "Missing rating" });
+    }
+
+    // accept "5" (string) or 5 (number)
+    const grade = Number(String(raw).trim());
+
+    if (!Number.isFinite(grade) || grade < 0 || grade > 5) {
       return res.status(400).json({ error: "Rating must be between 0 and 5" });
     }
 
     const book = await Book.findById(bookId);
     if (!book) return res.status(404).json({ error: "Book not found" });
 
-    const alreadyRated = book.ratings.some((r) => r.userId === userId);
+    if (!Array.isArray(book.ratings)) book.ratings = [];
+
+    // safe compare (ObjectId vs string)
+    const alreadyRated = book.ratings.some(
+      (r) => String(r.userId) === String(userId)
+    );
+
     if (alreadyRated) {
-      return res.status(400).json({ error: "User already rated this book" });
+      return res
+        .status(400)
+        .json({ error: "It is not possible to edit a rating." });
     }
 
     book.ratings.push({ userId, grade });
 
-    const sum = book.ratings.reduce((acc, r) => acc + r.grade, 0);
+    const sum = book.ratings.reduce((acc, r) => acc + Number(r.grade || 0), 0);
     book.averageRating = Math.round((sum / book.ratings.length) * 10) / 10;
 
     await book.save();
