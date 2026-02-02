@@ -14,6 +14,6 @@ router.get("/:id", bookCtrl.getOne);
 router.post("/", auth, upload, bookCtrl.create);
 router.put("/:id", auth, upload, bookCtrl.update);
 router.delete("/:id", auth, bookCtrl.remove);
-router.post("/:id/rating", auth, bookCtrl.rate);
+router.post("/:id/rating", auth, express.text({ type: "*/*" }), bookCtrl.rate);
 
 module.exports = router;

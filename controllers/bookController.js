@@ -3,21 +3,13 @@ const path = require("path");
 const sharp = require("sharp");
 const Book = require("../models/Book");
 
-/* =========================================================
-   Helpers
-   ========================================================= */
+/* ================= HELPERS ================= */
 
 const cleanId = (id) =>
   decodeURIComponent(String(id || ""))
     .replace(/%22/g, "")
     .replace(/["\\]/g, "")
     .trim();
-
-const parseMaybeJson = (value) => {
-  if (!value) return null;
-  if (typeof value === "object") return value;
-  return JSON.parse(value);
-};
 
 const buildImageUrl = (req, filename) => {
   const baseUrl =
@@ -46,17 +38,48 @@ const saveOptimizedImage = async (req) => {
 };
 
 const deleteImageFromUrl = (imageUrl) => {
-  try {
-    if (!imageUrl) return;
-    const filename = imageUrl.split("/images/")[1];
-    if (!filename) return;
-    fs.unlink(path.join(__dirname, "..", "images", filename), () => {});
-  } catch (_) {}
+  if (!imageUrl) return;
+  const filename = imageUrl.split("/images/")[1];
+  if (!filename) return;
+  fs.unlink(path.join(__dirname, "..", "images", filename), () => {});
 };
 
-/* =========================================================
-   Controllers
-   ========================================================= */
+// Pull initial rating from whatever the frontend sends
+const extractInitialRating = (bookData) => {
+  if (!bookData) return null;
+
+  // most common keys across versions
+  const raw =
+    bookData.rating ??
+    bookData.grade ??
+    bookData.note ??
+    bookData.averageRating ??
+    null;
+
+  // sometimes ratings is a number or an array
+  if (raw === null && bookData.ratings !== undefined) {
+    if (typeof bookData.ratings === "number") return bookData.ratings;
+    if (Array.isArray(bookData.ratings) && bookData.ratings[0]) {
+      const first = bookData.ratings[0];
+      return first.grade ?? first.rating ?? first.note ?? null;
+    }
+  }
+
+  return raw;
+};
+
+const sanitizeBookData = (bookData) => {
+  // remove things frontend might send that should not be stored directly
+  delete bookData.userId; // always force from token
+  delete bookData.rating;
+  delete bookData.grade;
+  delete bookData.note;
+  delete bookData.averageRating;
+  delete bookData.ratings;
+  return bookData;
+};
+
+/* ================= CONTROLLERS ================= */
 
 // GET /api/books
 exports.getAll = async (req, res) => {
@@ -90,30 +113,50 @@ exports.getBestRating = async (req, res) => {
   }
 };
 
-// POST /api/books
+// POST /api/books (multipart form-data: book + image)
 exports.create = async (req, res) => {
   try {
-    const bookData = parseMaybeJson(req.body.book);
+    const bookData = JSON.parse(req.body.book);
     const filename = await saveOptimizedImage(req);
 
-    if (!bookData || !filename) {
-      return res.status(400).json({ error: "Invalid request" });
+    if (!filename) {
+      return res.status(400).json({ error: "Image is required" });
     }
 
-    bookData.userId = req.auth.userId;
+    const userId = req.auth.userId;
+
+    // ✅ grab rating from any possible frontend key
+    const initialRaw = extractInitialRating(bookData);
+    const initialRating = initialRaw === null ? null : Number(initialRaw);
+
+    let ratings = [];
+    let averageRating = 0;
+
+    if (
+      initialRating !== null &&
+      !Number.isNaN(initialRating) &&
+      initialRating >= 0 &&
+      initialRating <= 5
+    ) {
+      ratings = [{ userId, grade: initialRating }];
+      averageRating = initialRating;
+    }
+
+    // ✅ clean fields + force userId
+    sanitizeBookData(bookData);
+    bookData.userId = userId;
 
     const book = new Book({
       ...bookData,
       imageUrl: buildImageUrl(req, filename),
-      ratings: [],
-      averageRating: 0,
+      ratings,
+      averageRating,
     });
 
     await book.save();
     return res.status(201).json({ message: "Book saved successfully!" });
   } catch (err) {
-    console.error("CREATE ERROR:", err);
-    return res.status(500).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 };
 
@@ -132,13 +175,16 @@ exports.update = async (req, res) => {
     if (req.file) {
       deleteImageFromUrl(book.imageUrl);
       const filename = await saveOptimizedImage(req);
-      updatedData = parseMaybeJson(req.body.book);
+      updatedData = JSON.parse(req.body.book);
       updatedData.imageUrl = buildImageUrl(req, filename);
     }
 
     delete updatedData.userId;
     delete updatedData.ratings;
     delete updatedData.averageRating;
+    delete updatedData.rating;
+    delete updatedData.grade;
+    delete updatedData.note;
 
     await Book.updateOne({ _id: bookId }, updatedData);
     return res.status(200).json({ message: "Book updated successfully!" });
@@ -172,12 +218,13 @@ exports.rate = async (req, res) => {
     const bookId = cleanId(req.params.id);
     const userId = req.auth.userId;
 
+    // accept rating under rating OR grade (frontends vary)
     const raw = req.body?.rating ?? req.body?.grade;
+    const grade = Number(raw);
+
     if (raw === undefined || raw === null || raw === "") {
       return res.status(400).json({ error: "Missing rating" });
     }
-
-    const grade = Number(raw);
     if (Number.isNaN(grade) || grade < 0 || grade > 5) {
       return res.status(400).json({ error: "Rating must be between 0 and 5" });
     }

@@ -1,17 +1,27 @@
 const multer = require("multer");
 
-const MIME_TYPES = {
-  "image/jpg": "jpg",
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-};
+const ALLOWED_MIME_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/pjpeg",
+  "image/jfif",
+];
 
 module.exports = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
   fileFilter: (req, file, cb) => {
-    if (!MIME_TYPES[file.mimetype]) return cb(new Error("Invalid file type"));
+    if (!ALLOWED_MIME_TYPES.includes(file.mimetype.toLowerCase())) {
+      return cb(
+        new Error(
+          `Invalid image type: ${file.mimetype}. Allowed: JPG, PNG, WEBP`
+        )
+      );
+    }
     cb(null, true);
   },
 }).single("image");
